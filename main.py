@@ -132,6 +132,7 @@ class Game:
     # game over screen
     def game_over(self):
         with self.screen_lock:
+            self.draw_flag.clear()
             self.screen.fill((0, 0, 0))
             game_over_text = self.font.render("Game Over!", True, (255, 255, 255))
             self.screen.blit(game_over_text, (100, 250))
