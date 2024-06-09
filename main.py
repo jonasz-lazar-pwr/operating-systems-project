@@ -1,3 +1,4 @@
+import random
 import sys
 import time
 
@@ -7,14 +8,30 @@ import threading
 
 class Game:
     def __init__(self):
-        self.player_pos = [64, 64]
+        self.elapsed_time = 0.0
+        self.player_pos = [128, 0]
         self.cars = []
+        self.collided_cars = set()
         pygame.init()
         pygame.display.set_caption("operating-systems-project")
         self.player_img = pygame.image.load("assets/player_sprite.png")
         self.car_1_img = pygame.image.load("assets/car_1.png")
+        self.car_images = [
+            pygame.image.load("assets/car_1.png"),
+            pygame.image.load("assets/car_2.png"),
+            pygame.image.load("assets/car_3.png")
+        ]
         self.background_img = pygame.image.load("assets/background.png")
         self.screen = pygame.display.set_mode((400, 600))
+        self.lives = 3
+        self.has_finished = False
+
+        # initialize font
+        pygame.font.init()
+        self.font = pygame.font.SysFont('Arial', 30)
+
+        # initialize timer
+        self.start_time = time.time()
 
         # threading events (mutexes?) for synchronization
         self.draw_flag = threading.Event()
@@ -22,10 +39,15 @@ class Game:
 
         # lock access to screen
         self.screen_lock = threading.Lock()
+        # lock access to cars
+        self.cars_lock = threading.Lock()
 
         # create and start the thread handling drawing
         self.drawing_thread = threading.Thread(target=self.draw_loop)
         self.drawing_thread.start()
+
+        # add cars at the very beggining of the game
+        self.add_initial_cars()
 
         # create and start the thread generating and moving cars
         self.generate_traffic_thread = threading.Thread(target=self.generate_traffic_loop)
@@ -35,6 +57,20 @@ class Game:
 
         # main game loop
         self.main_loop()
+
+    def add_initial_cars(self):
+        initial_car_positions = [
+            [128, 64, random.randint(0, len(self.car_images) - 1)],
+            [384, 64, random.randint(0, len(self.car_images) - 1)],
+            [352, 192, random.randint(0, len(self.car_images) - 1)],
+            [480, 192, random.randint(0, len(self.car_images) - 1)],
+            [288, 320, random.randint(0, len(self.car_images) - 1)],
+            [448, 320, random.randint(0, len(self.car_images) - 1)],
+            [128, 448, random.randint(0, len(self.car_images) - 1)],
+            [384, 448, random.randint(0, len(self.car_images) - 1)]
+        ]
+        with self.cars_lock:
+            self.cars.extend(initial_car_positions)
 
     # function drawing game objects
     def draw_objects(self):
@@ -46,7 +82,19 @@ class Game:
             self.screen.blit(self.player_img, (self.player_pos[0], self.player_pos[1]))
             # draw all cars
             for car in self.cars:
-                self.screen.blit(self.car_1_img, (car[0], car[1]))
+                self.screen.blit(self.car_images[car[2]], (car[0], car[1]))
+
+            # draw lives text
+            lives_text = self.font.render(f"Lives: {self.lives}", True, (255, 255, 255))
+            self.screen.blit(lives_text, (10, 10))
+
+            # draw timer
+            if not self.has_finished:
+                self.elapsed_time = time.time() - self.start_time
+
+            timer_text = self.font.render(f"{round(self.elapsed_time, 2)}", True, (255, 255, 255))
+            self.screen.blit(timer_text, (300, 10))
+
             pygame.display.flip()
 
     # handling keyboard input
@@ -65,9 +113,57 @@ class Game:
                         self.player_pos[1] += 64
                     elif event.key == pygame.K_d:
                         self.player_pos[0] += 64
+                    elif event.key == pygame.K_r:
+                        self.reset_game()
+
+            # check for collisions
+            self.check_collisions()
+
+            # check if player won
+            if self.player_pos[1] >= 512:
+                self.has_finished = True
+            # check if game over
+            if self.lives <= 0:
+                self.game_over()
 
             # allow drawing
             self.draw_flag.set()
+
+    # game over screen
+    def game_over(self):
+        with self.screen_lock:
+            self.screen.fill((0, 0, 0))
+            game_over_text = self.font.render("Game Over!", True, (255, 255, 255))
+            self.screen.blit(game_over_text, (100, 250))
+            pygame.display.flip()
+        # wait for a moment before exiting
+        pygame.time.delay(3000)
+        pygame.quit()
+        sys.exit(0)
+
+    # check for collisions between player and cars
+    def check_collisions(self):
+        player_rect = pygame.Rect(
+            self.player_pos[0],
+            self.player_pos[1],
+            self.player_img.get_width(),
+            self.player_img.get_height()
+        )
+        with self.cars_lock:
+            for index, car in enumerate(self.cars):
+                car_rect = pygame.Rect(
+                    car[0],
+                    car[1],
+                    self.car_1_img.get_width(),
+                    self.car_1_img.get_height()
+                )
+                if player_rect.colliderect(car_rect) and index not in self.collided_cars:
+                    self.lives -= 1
+                    self.player_pos = [128, 0]
+                    self.collided_cars.add(index)
+                    print(f"Lives left: {self.lives}")
+            # remove cars that are no longer colliding
+            self.collided_cars = {index for index in self.collided_cars if index < len(self.cars) and player_rect.colliderect(pygame.Rect(self.cars[index][0], self.cars[index][1], self.car_1_img.get_width(), self.car_1_img.get_height()))}
 
     # thread drawing objects on screen
     def draw_loop(self):
@@ -81,26 +177,41 @@ class Game:
 
     # thread generating cars
     def generate_traffic_loop(self):
+        lane_delays = [random.randint(2000, 5000) for _ in range(4)]
+        last_spawn_times = [pygame.time.get_ticks() for _ in range(4)]
+        lanes = [64, 192, 320, 448]
+
         while True:
-            car_1 = [464, 64]
-            car_2 = [464, 192]
-            car_3 = [464, 320]
-            car_4 = [464, 448]
-            self.cars.append(car_1)
-            self.cars.append(car_2)
-            self.cars.append(car_3)
-            self.cars.append(car_4)
-            pygame.time.delay(4000)
+            current_time = pygame.time.get_ticks()
+            for i, lane in enumerate(lanes):
+                if current_time - last_spawn_times[i] >= lane_delays[i]:
+                    car_type = random.randint(0, len(self.car_images) - 1)
+                    with self.cars_lock:
+                        self.cars.append([464, lane, car_type])
+                    lane_delays[i] = random.randint(2000, 5000)
+                    last_spawn_times[i] = current_time
+            pygame.time.delay(100)
 
     # thread moving cars
     def traffic_loop(self):
         while True:
-            # TODO remove cars when they are out of bounds!!!
-            for car in self.cars:
-                car[0] -= 1
-                print(self.cars)
-
+            with self.cars_lock:
+                for car in self.cars:
+                    car[0] -= 1
+                # remove cars when they are out of bounds
+                self.cars = [car for car in self.cars if car[0] >= -64]
             pygame.time.delay(10)
+
+    # allow reseting game
+    def reset_game(self):
+        self.elapsed_time = 0.0
+        self.player_pos = [128, 0]
+        self.cars = []
+        self.collided_cars = set()
+        self.lives = 3
+        self.has_finished = False
+        self.start_time = time.time()
+        self.add_initial_cars()
 
 
 game = Game()
