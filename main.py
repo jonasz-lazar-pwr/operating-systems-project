@@ -122,6 +122,7 @@ class Game:
             # check if player won
             if self.player_pos[1] >= 512:
                 self.has_finished = True
+                self.game_won()
             # check if game over
             if self.lives <= 0:
                 self.game_over()
@@ -132,6 +133,7 @@ class Game:
     # game over screen
     def game_over(self):
         with self.screen_lock:
+            self.has_finished = True
             self.draw_flag.clear()
             self.screen.fill((0, 0, 0))
             game_over_text = self.font.render("Game Over!", True, (255, 255, 255))
@@ -142,21 +144,44 @@ class Game:
         pygame.quit()
         sys.exit(0)
 
+    # game won screen
+    def game_won(self):
+        with self.screen_lock:
+            self.has_finished = True
+            self.draw_flag.clear()
+            self.screen.fill((0, 0, 0))
+            game_won_text = self.font.render('You won!', True, (255, 255, 255))
+            elapsed_time_text = self.font.render(f'{round(self.elapsed_time, 2)}', True, (255, 0, 255))
+            best_time_file = open('scores', 'r')
+            current_best_time = float(best_time_file.read())
+            current_best_time_text = self.font.render(f'Best time: {current_best_time}', True, (0, 255, 255))
+
+            if self.elapsed_time < current_best_time:
+                best_time_file = open('scores', 'w')
+                best_time_file.write(f'{round(self.elapsed_time, 2)}')
+
+            self.screen.blit(game_won_text, (140, 250))
+            self.screen.blit(elapsed_time_text, (160, 350))
+            self.screen.blit(current_best_time_text, (100, 450))
+            pygame.display.flip()
+
     # check for collisions between player and cars
     def check_collisions(self):
+        margin_x = 10
+        margin_y = 10
         player_rect = pygame.Rect(
-            self.player_pos[0],
-            self.player_pos[1],
-            self.player_img.get_width(),
-            self.player_img.get_height()
+            self.player_pos[0] + margin_x,
+            self.player_pos[1] + margin_y,
+            self.player_img.get_width() - 2 * margin_x,
+            self.player_img.get_height() - 2 * margin_y
         )
         with self.cars_lock:
             for index, car in enumerate(self.cars):
                 car_rect = pygame.Rect(
-                    car[0],
-                    car[1],
-                    self.car_1_img.get_width(),
-                    self.car_1_img.get_height()
+                    car[0] + margin_x,
+                    car[1] + margin_y,
+                    self.car_1_img.get_width() - 2 * margin_x,
+                    self.car_1_img.get_height() - 2 * margin_y
                 )
                 if player_rect.colliderect(car_rect) and index not in self.collided_cars:
                     self.lives -= 1
@@ -172,7 +197,8 @@ class Game:
             # wait till there is permission
             self.draw_flag.wait()
             # do the drawing
-            self.draw_objects()
+            if not self.has_finished:
+                self.draw_objects()
             # prevent further drawing with no permission
             self.draw_flag.clear()
 
